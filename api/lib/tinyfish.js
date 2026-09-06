@@ -46,7 +46,10 @@ export async function fetchUrls(urls) {
     body: JSON.stringify({
       urls,
       format: 'markdown',
-      per_url_timeout_ms: 20000,
+      per_url_timeout_ms: 15000,
+      purpose: 'Extract student event details: title, date, venue, organizer, registration link',
+      links: true,
+      page_metadata: true,
     }),
   });
 

@@ -6,7 +6,7 @@ export const config = {
 };
 
 const MAX_FETCH_URLS = 4;
-const MAX_AGENT_RUNS = 1;
+const MAX_AGENT_RUNS = 0;
 const AGENT_TIMEOUT_MS = 5000;
 const CACHE_TTL_MS = 5 * 60 * 1000;
 
@@ -88,24 +88,37 @@ function inferCity(text) {
   return '';
 }
 
+function parseMonth(name) {
+  const monthNames = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  return monthNames.findIndex((x) => x.toLowerCase() === name.toLowerCase().slice(0, 3));
+}
+
 function extractDate(text) {
   if (!text) return '';
 
+  // YYYY-MM-DD
   let m = text.match(/(202[5-9])-(0[1-9]|1[0-2])-([0-2][0-9]|3[0-1])/);
   if (m) return m[0];
 
+  // DD Mon YYYY
   m = text.match(/(\d{1,2})\s+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+(202[5-9])/i);
   if (m) {
-    const monthNames = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-    const mon = monthNames.findIndex((x) => x.toLowerCase() === m[2].toLowerCase().slice(0,3));
+    const mon = parseMonth(m[2]);
     return m[3] + '-' + String(mon + 1).padStart(2, '0') + '-' + m[1].padStart(2, '0');
   }
 
-  m = text.match(/(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+(\d{1,2}),?\s+(202[5-9])/i);
+  // Mon DD, YYYY or Mon DD-DD, YYYY
+  m = text.match(/(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+(\d{1,2})(?:[-–]\d{1,2})?,?\s+(202[5-9])/i);
   if (m) {
-    const monthNames = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-    const mon = monthNames.findIndex((x) => x.toLowerCase() === m[1].toLowerCase().slice(0,3));
-    return m[3] + '-' + String(mon + 1).padStart(2, '0') + '-' + m[2].padStart(2, '0');
+    const mon = parseMonth(m[1]);
+    return m[4] + '-' + String(mon + 1).padStart(2, '0') + '-' + m[2].padStart(2, '0');
+  }
+
+  // DDth to DDth Mon YYYY
+  m = text.match(/(\d{1,2})(?:st|nd|rd|th)?\s*(?:[-–]|to)\s*(?:\d{1,2})(?:st|nd|rd|th)?\s+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+(202[5-9])/i);
+  if (m) {
+    const mon = parseMonth(m[2]);
+    return m[4] + '-' + String(mon + 1).padStart(2, '0') + '-' + m[1].padStart(2, '0');
   }
 
   return '';
@@ -172,31 +185,44 @@ async function discoverUrls(filters) {
 }
 
 function mapSearchResultToEvent(result, fetchResult, filters) {
-  const text = (
-    (result.title || '') +
-    ' ' +
-    (result.snippet || '') +
-    ' ' +
-    (fetchResult?.text || '')
-  );
+  const searchText = (result.title || '') + ' ' + (result.snippet || '');
+  const fetchText = fetchResult?.text || '';
+  const meta = fetchResult?.page_metadata || {};
+  const og = meta.og || {};
+  const text = searchText + ' ' + fetchText;
+
+  const title =
+    og.title ||
+    result.title ||
+    fetchResult?.title ||
+    'Untitled event';
+
+  const description =
+    og.description ||
+    fetchResult?.description ||
+    result.snippet ||
+    'Student event. Visit the page for full details and registration.';
+
   const url = result.url;
-  const inferredDate = extractDate(text) || addDaysISO(30);
+  const inferredDate = extractDate(text) || extractDate(og.title || '') || addDaysISO(30);
+
+  const links = fetchResult?.links || [];
+  const registerLink = links.find(
+    (l) => /register|signup|apply|tickets/i.test(l)
+  );
 
   return {
     id: 'tf-' + hashCode(url),
-    title: result.title || fetchResult?.title || 'Untitled event',
+    title,
     field: filters.field || inferField(text),
     type: filters.type || inferType(text),
     city: filters.city || inferCity(text) || 'India',
     startDate: inferredDate,
     endDate: inferredDate,
     venue: result.site_name || 'TBA',
-    description:
-      fetchResult?.description ||
-      result.snippet ||
-      'Student event. Visit the page for full details and registration.',
-    registrationUrl: url,
-    organizer: result.site_name || 'Unknown organizer',
+    description,
+    registrationUrl: registerLink || url,
+    organizer: result.site_name || og.site_name || 'Unknown organizer',
     mode: inferMode(text, url),
     _source: 'tinyfish',
   };
