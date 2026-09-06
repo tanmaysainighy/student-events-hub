@@ -18,12 +18,16 @@ export default async function handler(req, res) {
         'student hackathon India 2025',
       ];
 
+  const afterDate = req.query.afterDate || '';
+
   const results = await Promise.all(
     queries.map(async (q) => {
-      const url =
+      let url =
         'https://api.search.tinyfish.ai/?query=' +
         encodeURIComponent(q) +
         '&location=IN&language=en&domain_type=web';
+      if (afterDate) url += '&after_date=' + encodeURIComponent(afterDate);
+
       try {
         const r = await fetch(url, {
           headers: { 'X-API-Key': apiKey, Accept: 'application/json' },
