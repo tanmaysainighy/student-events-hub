@@ -111,14 +111,14 @@ function extractDate(text) {
   m = text.match(/(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+(\d{1,2})(?:[-–]\d{1,2})?,?\s+(202[5-9])/i);
   if (m) {
     const mon = parseMonth(m[1]);
-    return m[4] + '-' + String(mon + 1).padStart(2, '0') + '-' + m[2].padStart(2, '0');
+    return m[3] + '-' + String(mon + 1).padStart(2, '0') + '-' + m[2].padStart(2, '0');
   }
 
   // DDth to DDth Mon YYYY
   m = text.match(/(\d{1,2})(?:st|nd|rd|th)?\s*(?:[-–]|to)\s*(?:\d{1,2})(?:st|nd|rd|th)?\s+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+(202[5-9])/i);
   if (m) {
     const mon = parseMonth(m[2]);
-    return m[4] + '-' + String(mon + 1).padStart(2, '0') + '-' + m[1].padStart(2, '0');
+    return m[3] + '-' + String(mon + 1).padStart(2, '0') + '-' + m[1].padStart(2, '0');
   }
 
   return '';
