@@ -1,16 +1,13 @@
 import { seedEvents } from '../src/data/seedEvents.js';
-import {
-  searchTinyFish,
-  extractEventsWithAgent,
-} from './lib/tinyfish.js';
+import { searchTinyFish, extractEventsWithAgent } from './lib/tinyfish.js';
 
 export const config = {
   maxDuration: 30,
 };
 
-const MAX_AGENT_RUNS = 3;
-const AGENT_TIMEOUT_MS = 8000;
-const OVERALL_TIMEOUT_MS = 26000;
+const MAX_AGENT_RUNS = 4;
+const AGENT_TIMEOUT_MS = 9000;
+const OVERALL_TIMEOUT_MS = 28000;
 const CACHE_TTL_MS = 5 * 60 * 1000;
 
 const cache = new Map();
@@ -23,10 +20,6 @@ function hashCode(str) {
     hash = hash & hash;
   }
   return Math.abs(hash).toString(36).slice(0, 10);
-}
-
-function todayISO() {
-  return new Date().toISOString().split('T')[0];
 }
 
 function filterSeedEvents(filters) {
@@ -45,10 +38,10 @@ function buildSearchQueries(filters) {
   const city = filters.city || 'India';
 
   return [
-    type + ' ' + field + ' ' + city + ' India 2025 registration',
-    field + ' ' + type + ' ' + city + ' site:devfolio.co OR site:unstop.com',
-    'upcoming ' + field + ' ' + type + ' ' + city + ' India',
-    field + ' ' + type + ' ' + city + ' India students',
+    type + ' ' + field + ' ' + city + ' India 2025',
+    field + ' ' + type + ' ' + city + ' India',
+    'upcoming ' + type + ' ' + field + ' ' + city + ' India',
+    type + ' ' + city + ' India students devfolio unstop',
   ];
 }
 
@@ -67,17 +60,14 @@ function scoreUrl(result, filters) {
   if (filters.field && text.includes(filters.field.toLowerCase())) score += 10;
   if (filters.type && text.includes(filters.type.toLowerCase())) score += 10;
 
-  // Prefer known event platforms
   if (/devfolio\.co|unstop\.com|eventbrite\.com|townscript\.com|skillenza\.com/.test(url)) {
     score += 20;
   }
 
-  // Boost pages that smell like event detail pages
   if (/\/(events?|hackathons?|workshops?|competitions?)\//.test(url)) score += 8;
   if (/register|registration|apply|rsvp/.test(text)) score += 6;
   if (/hackathon|workshop|meetup|conference|bootcamp|summit/.test(text)) score += 4;
 
-  // Penalize generic / blog / listicle pages
   if (/blog|news|medium\.com|wikipedia/.test(url)) score -= 15;
 
   return score;
@@ -85,15 +75,11 @@ function scoreUrl(result, filters) {
 
 async function discoverUrls(filters) {
   const queries = buildSearchQueries(filters);
-  const afterDate = todayISO();
-  const purpose = undefined;
 
   const searchPromises = queries.map((q) =>
     searchTinyFish({
       query: q,
-      purpose,
-      afterDate,
-      
+      purpose: 'Find specific upcoming student events in India',
     }).catch((err) => {
       console.error('Search error for query "' + q + '":', err.message);
       return [];
@@ -165,7 +151,10 @@ function withTimeout(promise, ms, label) {
   return Promise.race([
     promise,
     new Promise((_, reject) =>
-      setTimeout(() => reject(new Error(label + ' timed out after ' + ms + 'ms')), ms)
+      setTimeout(
+        () => reject(new Error(label + ' timed out after ' + ms + 'ms')),
+        ms
+      )
     ),
   ]);
 }
@@ -174,7 +163,10 @@ export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
-  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+  res.setHeader(
+    'Cache-Control',
+    'no-store, no-cache, must-revalidate, proxy-revalidate'
+  );
   res.setHeader('Pragma', 'no-cache');
   res.setHeader('Expires', '0');
 
@@ -198,12 +190,7 @@ export default async function handler(req, res) {
   }
 
   try {
-    const ranked = await withTimeout(
-      discoverUrls(filters),
-      12000,
-      'URL discovery'
-    );
-
+    const ranked = await withTimeout(discoverUrls(filters), 12000, 'URL discovery');
     const agentUrls = ranked.map((r) => r.url).slice(0, MAX_AGENT_RUNS);
 
     const extracted = agentUrls.length
@@ -216,7 +203,6 @@ export default async function handler(req, res) {
 
     let events = dedupeEvents(extracted.map((e) => normalizeEvent(e, filters)));
 
-    // Supplement with seed data if live results are sparse
     if (events.length < 4) {
       const seed = filterSeedEvents(filters);
       events = dedupeEvents([...events, ...seed]);
