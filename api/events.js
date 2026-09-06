@@ -86,14 +86,14 @@ function scoreUrl(result, filters) {
 async function discoverUrls(filters) {
   const queries = buildSearchQueries(filters);
   const afterDate = todayISO();
-  const purpose = 'Find specific upcoming student ' + (filters.type || 'events') + ' pages';
+  const purpose = undefined;
 
   const searchPromises = queries.map((q) =>
     searchTinyFish({
       query: q,
       purpose,
       afterDate,
-      fetchConfig: { format: 'markdown' },
+      
     }).catch((err) => {
       console.error('Search error for query "' + q + '":', err.message);
       return [];
