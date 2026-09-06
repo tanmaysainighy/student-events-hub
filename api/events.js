@@ -5,7 +5,7 @@ export const config = {
   maxDuration: 30,
 };
 
-const MAX_FETCH_URLS = 6;
+const MAX_FETCH_URLS = 4;
 const MAX_AGENT_RUNS = 1;
 const AGENT_TIMEOUT_MS = 5000;
 const CACHE_TTL_MS = 5 * 60 * 1000;
@@ -265,9 +265,14 @@ export default async function handler(req, res) {
     const ranked = await withTimeout(discoverUrls(filters), 6000, 'URL discovery');
     const topUrls = ranked.map((r) => r.url).slice(0, MAX_FETCH_URLS);
 
-    const fetchResults = topUrls.length
-      ? await withTimeout(fetchUrls(topUrls), 5000, 'URL fetch')
-      : [];
+    let fetchResults = [];
+    if (topUrls.length) {
+      try {
+        fetchResults = await withTimeout(fetchUrls(topUrls), 6000, 'URL fetch');
+      } catch (err) {
+        console.error('Fetch timeout/error:', err.message);
+      }
+    }
 
     const fetchByUrl = new Map();
     for (const fr of fetchResults) {
