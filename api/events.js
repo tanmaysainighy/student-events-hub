@@ -135,6 +135,9 @@ function scoreUrl(result, filters) {
   if (/hackathon|workshop|meetup|conference|bootcamp|summit/.test(text)) score += 4;
 
   if (/blog|news|medium\.com|wikipedia/.test(url)) score -= 15;
+  if (/\/d\//.test(url) || /\/discover\/?$/.test(url) || /\/hackathons\/?$/.test(url) || /\/events\/?$/.test(url)) score -= 18;
+  if (/\/[^/]+\/?$/.test(url) && !/\.html?$/i.test(url)) score -= 12;
+  if (/\/[0-9]+\//.test(url) || /[-_][0-9]{3,}/.test(url)) score += 6;
 
   return score;
 }
@@ -181,7 +184,7 @@ function mapSearchResultToEvent(result, fetchResult, filters) {
 
   return {
     id: 'tf-' + hashCode(url),
-    title: fetchResult?.title || result.title || 'Untitled event',
+    title: result.title || fetchResult?.title || 'Untitled event',
     field: filters.field || inferField(text),
     type: filters.type || inferType(text),
     city: filters.city || inferCity(text) || 'India',
