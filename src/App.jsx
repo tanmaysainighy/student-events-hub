@@ -105,7 +105,7 @@ function App() {
           <p>
             {loading ? (
               <span className="status-loading">
-                <Loader2 size={16} className="spin" /> Loading events…
+                <Loader2 size={16} className="spin" /> Searching and scraping event pages…
               </span>
             ) : (
               <span>
