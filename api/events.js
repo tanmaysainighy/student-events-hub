@@ -1,13 +1,13 @@
 import { seedEvents } from '../src/data/seedEvents.js';
-import { searchTinyFish, extractEventsWithAgent } from './lib/tinyfish.js';
+import { searchTinyFish, fetchUrls, extractEventsWithAgent } from './lib/tinyfish.js';
 
 export const config = {
   maxDuration: 30,
 };
 
-const MAX_AGENT_RUNS = 4;
-const AGENT_TIMEOUT_MS = 9000;
-const OVERALL_TIMEOUT_MS = 28000;
+const MAX_FETCH_URLS = 6;
+const MAX_AGENT_RUNS = 1;
+const AGENT_TIMEOUT_MS = 5000;
 const CACHE_TTL_MS = 5 * 60 * 1000;
 
 const cache = new Map();
@@ -20,6 +20,12 @@ function hashCode(str) {
     hash = hash & hash;
   }
   return Math.abs(hash).toString(36).slice(0, 10);
+}
+
+function addDaysISO(days) {
+  const d = new Date();
+  d.setDate(d.getDate() + days);
+  return d.toISOString().split('T')[0];
 }
 
 function filterSeedEvents(filters) {
@@ -43,6 +49,66 @@ function buildSearchQueries(filters) {
     'upcoming ' + type + ' ' + field + ' ' + city + ' India',
     type + ' ' + city + ' India students devfolio unstop',
   ];
+}
+
+function inferType(text) {
+  const lower = (text || '').toLowerCase();
+  if (lower.includes('hackathon')) return 'Hackathon';
+  if (lower.includes('workshop')) return 'Workshop';
+  if (lower.includes('meetup')) return 'Meetup';
+  if (lower.includes('conference')) return 'Conference';
+  if (lower.includes('bootcamp')) return 'Bootcamp';
+  return 'Event';
+}
+
+function inferField(text) {
+  const lower = (text || '').toLowerCase();
+  if (lower.includes('design')) return 'Design';
+  if (lower.includes('business') || lower.includes('startup')) return 'Business';
+  if (lower.includes('data science') || lower.includes('data')) return 'Data Science';
+  if (lower.includes('product')) return 'Product';
+  return 'Technology';
+}
+
+function inferMode(text, url) {
+  const combined = ((text || '') + ' ' + (url || '')).toLowerCase();
+  if (combined.includes('online') || combined.includes('virtual') || combined.includes('remote')) {
+    return 'Online';
+  }
+  if (combined.includes('hybrid')) return 'Hybrid';
+  return 'In-person';
+}
+
+function inferCity(text) {
+  const cities = ['Bengaluru', 'Delhi', 'Mumbai', 'Pune', 'Hyderabad', 'Chennai'];
+  const lower = (text || '').toLowerCase();
+  for (const c of cities) {
+    if (lower.includes(c.toLowerCase())) return c;
+  }
+  return '';
+}
+
+function extractDate(text) {
+  if (!text) return '';
+
+  let m = text.match(/(202[5-9])-(0[1-9]|1[0-2])-([0-2][0-9]|3[0-1])/);
+  if (m) return m[0];
+
+  m = text.match(/(\d{1,2})\s+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+(202[5-9])/i);
+  if (m) {
+    const monthNames = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+    const mon = monthNames.findIndex((x) => x.toLowerCase() === m[2].toLowerCase().slice(0,3));
+    return m[3] + '-' + String(mon + 1).padStart(2, '0') + '-' + m[1].padStart(2, '0');
+  }
+
+  m = text.match(/(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+(\d{1,2}),?\s+(202[5-9])/i);
+  if (m) {
+    const monthNames = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+    const mon = monthNames.findIndex((x) => x.toLowerCase() === m[1].toLowerCase().slice(0,3));
+    return m[3] + '-' + String(mon + 1).padStart(2, '0') + '-' + m[2].padStart(2, '0');
+  }
+
+  return '';
 }
 
 function scoreUrl(result, filters) {
@@ -102,45 +168,48 @@ async function discoverUrls(filters) {
     .sort((a, b) => b.score - a.score);
 }
 
-async function extractFromUrls(urls, filters) {
-  const limited = urls.slice(0, MAX_AGENT_RUNS);
-  if (!limited.length) return [];
-
-  const promises = limited.map((url) =>
-    extractEventsWithAgent(url, filters, AGENT_TIMEOUT_MS).catch((err) => {
-      console.error('Agent error for', url, ':', err.message);
-      return [];
-    })
+function mapSearchResultToEvent(result, fetchResult, filters) {
+  const text = (
+    (result.title || '') +
+    ' ' +
+    (result.snippet || '') +
+    ' ' +
+    (fetchResult?.text || '')
   );
+  const url = result.url;
+  const inferredDate = extractDate(text) || addDaysISO(30);
 
-  const results = await Promise.all(promises);
-  return results.flat();
-}
-
-function normalizeEvent(event, filters) {
-  const url = event.registrationUrl || event._sourceUrl || '';
   return {
-    id: 'tf-' + hashCode(url || event.title + event.startDate),
-    title: event.title,
-    field: event.field || filters.field || 'Technology',
-    type: event.type || filters.type || 'Event',
-    city: event.city || filters.city || 'India',
-    startDate: event.startDate,
-    endDate: event.endDate || event.startDate,
-    venue: event.venue || 'TBA',
+    id: 'tf-' + hashCode(url),
+    title: fetchResult?.title || result.title || 'Untitled event',
+    field: filters.field || inferField(text),
+    type: filters.type || inferType(text),
+    city: filters.city || inferCity(text) || 'India',
+    startDate: inferredDate,
+    endDate: inferredDate,
+    venue: result.site_name || 'TBA',
     description:
-      event.description || 'Details available on the registration page.',
+      fetchResult?.description ||
+      result.snippet ||
+      'Student event. Visit the page for full details and registration.',
     registrationUrl: url,
-    organizer: event.organizer || 'Unknown organizer',
-    mode: event.mode || 'In-person',
+    organizer: result.site_name || 'Unknown organizer',
+    mode: inferMode(text, url),
     _source: 'tinyfish',
   };
+}
+
+async function enrichWithAgent(url, filters) {
+  return extractEventsWithAgent(url, filters, AGENT_TIMEOUT_MS).catch((err) => {
+    console.error('Agent enrichment error for', url, ':', err.message);
+    return [];
+  });
 }
 
 function dedupeEvents(events) {
   const seen = new Set();
   return events.filter((e) => {
-    const key = (e.title + '|' + e.startDate).toLowerCase();
+    const key = (e.title + '|' + e.startDate + '|' + e.city).toLowerCase();
     if (seen.has(key)) return false;
     seen.add(key);
     return true;
@@ -190,18 +259,51 @@ export default async function handler(req, res) {
   }
 
   try {
-    const ranked = await withTimeout(discoverUrls(filters), 12000, 'URL discovery');
-    const agentUrls = ranked.map((r) => r.url).slice(0, MAX_AGENT_RUNS);
+    const ranked = await withTimeout(discoverUrls(filters), 6000, 'URL discovery');
+    const topUrls = ranked.map((r) => r.url).slice(0, MAX_FETCH_URLS);
 
-    const extracted = agentUrls.length
-      ? await withTimeout(
-          extractFromUrls(agentUrls, filters),
-          OVERALL_TIMEOUT_MS,
-          'Event extraction'
-        )
+    const fetchResults = topUrls.length
+      ? await withTimeout(fetchUrls(topUrls), 5000, 'URL fetch')
       : [];
 
-    let events = dedupeEvents(extracted.map((e) => normalizeEvent(e, filters)));
+    const fetchByUrl = new Map();
+    for (const fr of fetchResults) {
+      if (fr.url || fr.final_url) {
+        fetchByUrl.set(fr.url || fr.final_url, fr);
+      }
+    }
+
+    let events = dedupeEvents(
+      ranked
+        .slice(0, MAX_FETCH_URLS)
+        .map((r) => mapSearchResultToEvent(r, fetchByUrl.get(r.url), filters))
+    );
+
+    if (ranked.length && MAX_AGENT_RUNS > 0) {
+      const enriched = await withTimeout(
+        enrichWithAgent(ranked[0].url, filters),
+        AGENT_TIMEOUT_MS,
+        'Agent enrichment'
+      );
+      if (enriched.length) {
+        const normalized = enriched.map((e) => ({
+          id: 'tf-' + hashCode(e.registrationUrl || e._sourceUrl || e.title),
+          title: e.title,
+          field: e.field || filters.field || inferField(e.title + e.description),
+          type: e.type || filters.type || inferType(e.title + e.description),
+          city: e.city || filters.city || 'India',
+          startDate: e.startDate,
+          endDate: e.endDate || e.startDate,
+          venue: e.venue || 'TBA',
+          description: e.description || 'Student event.',
+          registrationUrl: e.registrationUrl || e._sourceUrl || ranked[0].url,
+          organizer: e.organizer || ranked[0].site_name || 'Unknown organizer',
+          mode: e.mode || 'In-person',
+          _source: 'tinyfish',
+        }));
+        events = dedupeEvents([...normalized, ...events]);
+      }
+    }
 
     if (events.length < 4) {
       const seed = filterSeedEvents(filters);
@@ -214,7 +316,7 @@ export default async function handler(req, res) {
       query: filters,
       meta: {
         searched: ranked.length,
-        scraped: agentUrls.length,
+        fetched: topUrls.length,
       },
     };
 
