@@ -93,35 +93,55 @@ function parseMonth(name) {
   return monthNames.findIndex((x) => x.toLowerCase() === name.toLowerCase().slice(0, 3));
 }
 
+// Accepts any 20xx year, then rejects dates outside a plausible event
+// window (last 12 months to 3 years out) so stray years in page text --
+// copyright lines, "since 2004" -- don't become event dates.
+function isPlausibleEventDate(iso) {
+  if (!iso) return false;
+  const d = new Date(iso + 'T00:00:00Z');
+  if (Number.isNaN(d.getTime())) return false;
+  const now = new Date();
+  const floor = new Date(now);
+  floor.setFullYear(floor.getFullYear() - 1);
+  const ceiling = new Date(now);
+  ceiling.setFullYear(ceiling.getFullYear() + 3);
+  return d >= floor && d <= ceiling;
+}
+
 function extractDate(text) {
   if (!text) return '';
 
   // YYYY-MM-DD
-  let m = text.match(/(202[5-9])-(0[1-9]|1[0-2])-([0-2][0-9]|3[0-1])/);
+  let m = text.match(/(20\d{2})-(0[1-9]|1[0-2])-([0-2][0-9]|3[0-1])/);
   if (m) return m[0];
 
   // DD Mon YYYY
-  m = text.match(/(\d{1,2})\s+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+(202[5-9])/i);
+  m = text.match(/(\d{1,2})\s+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+(20\d{2})/i);
   if (m) {
     const mon = parseMonth(m[2]);
     return m[3] + '-' + String(mon + 1).padStart(2, '0') + '-' + m[1].padStart(2, '0');
   }
 
   // Mon DD, YYYY or Mon DD-DD, YYYY
-  m = text.match(/(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+(\d{1,2})(?:[-–]\d{1,2})?,?\s+(202[5-9])/i);
+  m = text.match(/(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+(\d{1,2})(?:[-–]\d{1,2})?,?\s+(20\d{2})/i);
   if (m) {
     const mon = parseMonth(m[1]);
     return m[3] + '-' + String(mon + 1).padStart(2, '0') + '-' + m[2].padStart(2, '0');
   }
 
   // DDth to DDth Mon YYYY
-  m = text.match(/(\d{1,2})(?:st|nd|rd|th)?\s*(?:[-–]|to)\s*(?:\d{1,2})(?:st|nd|rd|th)?\s+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+(202[5-9])/i);
+  m = text.match(/(\d{1,2})(?:st|nd|rd|th)?\s*(?:[-–]|to)\s*(?:\d{1,2})(?:st|nd|rd|th)?\s+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+(20\d{2})/i);
   if (m) {
     const mon = parseMonth(m[2]);
     return m[3] + '-' + String(mon + 1).padStart(2, '0') + '-' + m[1].padStart(2, '0');
   }
 
   return '';
+}
+
+function extractPlausibleDate(text) {
+  const candidate = extractDate(text);
+  return isPlausibleEventDate(candidate) ? candidate : '';
 }
 
 function scoreUrl(result, filters) {
