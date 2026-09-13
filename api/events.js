@@ -10,7 +10,28 @@ const MAX_AGENT_RUNS = 0;
 const AGENT_TIMEOUT_MS = 5000;
 const CACHE_TTL_MS = 5 * 60 * 1000;
 
+// Process-local cache. On Vercel this lives inside one warm serverless
+// instance: it is lost on cold start and is not shared between concurrent
+// instances, so the effective hit rate is far below what the TTL suggests.
+// It is kept because a warm instance handling a burst of filter changes does
+// benefit, and because it gives us a stale copy to fall back on when the
+// upstream pipeline fails. A cross-instance cache (Vercel KV / Redis) is the
+// real fix and is tracked in the README.
+const CACHE_MAX_ENTRIES = 50;
 const cache = new Map();
+
+function cacheGet(key) {
+  return cache.get(key);
+}
+
+function cacheSet(key, data) {
+  // Bound growth so a long-lived warm instance cannot leak memory.
+  if (cache.size >= CACHE_MAX_ENTRIES) {
+    const oldest = cache.keys().next().value;
+    cache.delete(oldest);
+  }
+  cache.set(key, { ts: Date.now(), data });
+}
 
 function hashCode(str) {
   let hash = 0;
@@ -311,9 +332,11 @@ export default async function handler(req, res) {
   };
 
   const cacheKey = JSON.stringify(filters);
-  const cached = cache.get(cacheKey);
+  const cached = cacheGet(cacheKey);
   if (cached && Date.now() - cached.ts < CACHE_TTL_MS) {
-    return res.status(200).json(cached.data);
+    return res
+      .status(200)
+      .json({ ...cached.data, meta: { ...cached.data.meta, cached: true } });
   }
 
   try {
@@ -389,13 +412,28 @@ export default async function handler(req, res) {
       meta: {
         searched: ranked.length,
         fetched: topUrls.length,
+        cached: false,
       },
     };
 
-    cache.set(cacheKey, { ts: Date.now(), data: response });
+    cacheSet(cacheKey, response);
     res.status(200).json(response);
   } catch (err) {
     console.error('Pipeline error:', err.message);
+
+    // Expired live results beat seed data: they are stale but real. Only fall
+    // through to the seeded dataset when nothing has ever been cached here.
+    if (cached) {
+      return res.status(200).json({
+        ...cached.data,
+        notice:
+          'Live extraction failed; showing cached results from ' +
+          new Date(cached.ts).toISOString() +
+          '.',
+        meta: { ...cached.data.meta, cached: true, stale: true },
+      });
+    }
+
     const fallback = {
       source: 'seed',
       events: filterSeedEvents(filters),
