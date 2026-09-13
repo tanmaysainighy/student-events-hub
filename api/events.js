@@ -22,10 +22,8 @@ function hashCode(str) {
   return Math.abs(hash).toString(36).slice(0, 10);
 }
 
-function addDaysISO(days) {
-  const d = new Date();
-  d.setDate(d.getDate() + days);
-  return d.toISOString().split('T')[0];
+function currentYear() {
+  return new Date().getFullYear();
 }
 
 function filterSeedEvents(filters) {
@@ -43,8 +41,10 @@ function buildSearchQueries(filters) {
   const field = filters.field || 'student';
   const city = filters.city || 'India';
 
+  const year = currentYear();
+
   return [
-    type + ' ' + field + ' ' + city + ' India 2025',
+    type + ' ' + field + ' ' + city + ' India ' + year,
     field + ' ' + type + ' ' + city + ' India',
     'upcoming ' + type + ' ' + field + ' ' + city + ' India',
     type + ' ' + city + ' India students devfolio unstop',
