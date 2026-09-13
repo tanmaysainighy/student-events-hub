@@ -224,7 +224,11 @@ function mapSearchResultToEvent(result, fetchResult, filters) {
     'Student event. Visit the page for full details and registration.';
 
   const url = result.url;
-  const inferredDate = extractDate(text) || extractDate(og.title || '') || addDaysISO(30);
+  // No date found means no date shown. The previous fallback invented a
+  // date 30 days out and rendered it identically to a real one, which made
+  // every undated event look confirmed.
+  const extractedDate =
+    extractPlausibleDate(text) || extractPlausibleDate(og.title || '');
 
   const links = fetchResult?.links || [];
   const registerLink = links.find(
@@ -237,8 +241,9 @@ function mapSearchResultToEvent(result, fetchResult, filters) {
     field: filters.field || inferField(text),
     type: filters.type || inferType(text),
     city: filters.city || inferCity(text) || 'India',
-    startDate: inferredDate,
-    endDate: inferredDate,
+    startDate: extractedDate || null,
+    endDate: extractedDate || null,
+    dateUnknown: !extractedDate,
     venue: result.site_name || 'TBA',
     description,
     registrationUrl: registerLink || url,
@@ -258,7 +263,7 @@ async function enrichWithAgent(url, filters) {
 function dedupeEvents(events) {
   const seen = new Set();
   return events.filter((e) => {
-    const key = (e.title + '|' + e.startDate + '|' + e.city).toLowerCase();
+    const key = (e.title + '|' + (e.startDate || 'undated') + '|' + e.city).toLowerCase();
     if (seen.has(key)) return false;
     seen.add(key);
     return true;
@@ -346,8 +351,9 @@ export default async function handler(req, res) {
           field: e.field || filters.field || inferField(e.title + e.description),
           type: e.type || filters.type || inferType(e.title + e.description),
           city: e.city || filters.city || 'India',
-          startDate: e.startDate,
-          endDate: e.endDate || e.startDate,
+          startDate: e.startDate || null,
+          endDate: e.endDate || e.startDate || null,
+          dateUnknown: !e.startDate,
           venue: e.venue || 'TBA',
           description: e.description || 'Student event.',
           registrationUrl: e.registrationUrl || e._sourceUrl || ranked[0].url,

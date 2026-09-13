@@ -687,3 +687,10 @@ body {
     padding: 20px;
   }
 }
+
+/* Fields the extraction pipeline could not determine are rendered muted and
+   italic so an unknown value never reads as a confirmed one. */
+.meta-unknown {
+  color: var(--text-muted, #8a8f98);
+  font-style: italic;
+}

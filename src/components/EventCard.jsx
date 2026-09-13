@@ -3,8 +3,10 @@ import { format } from 'date-fns';
 import { FavoriteButton } from './FavoriteButton';
 
 export function EventCard({ event, isFavorite, onToggleFavorite, onClick }) {
-  const dateDisplay =
-    event.startDate === event.endDate
+  const hasDate = Boolean(event.startDate) && !event.dateUnknown;
+  const dateDisplay = !hasDate
+    ? 'Date not listed'
+    : event.startDate === event.endDate
       ? format(new Date(event.startDate), 'MMM d, yyyy')
       : format(new Date(event.startDate), 'MMM d') +
         ' - ' +
@@ -29,7 +31,7 @@ export function EventCard({ event, isFavorite, onToggleFavorite, onClick }) {
       <h3 className="event-card-title">{event.title}</h3>
       <p className="event-card-type">{event.type}</p>
       <div className="event-card-meta">
-        <span>
+        <span className={hasDate ? undefined : 'meta-unknown'}>
           <Calendar size={14} /> {dateDisplay}
         </span>
         <span>
