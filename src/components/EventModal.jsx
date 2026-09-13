@@ -18,8 +18,10 @@ export function EventModal({ event, isFavorite, onToggleFavorite, onClose }) {
 
   if (!event) return null;
 
-  const dateDisplay =
-    event.startDate === event.endDate
+  const hasDate = Boolean(event.startDate) && !event.dateUnknown;
+  const dateDisplay = !hasDate
+    ? 'Not listed on the source page'
+    : event.startDate === event.endDate
       ? format(new Date(event.startDate), 'MMMM d, yyyy')
       : format(new Date(event.startDate), 'MMMM d') +
         ' - ' +
@@ -46,14 +48,19 @@ export function EventModal({ event, isFavorite, onToggleFavorite, onClose }) {
             <Calendar size={18} />
             <div>
               <span className="label">Date</span>
-              <span className="value">{dateDisplay}</span>
+              <span className={'value' + (hasDate ? '' : ' meta-unknown')}>
+                {dateDisplay}
+              </span>
             </div>
           </div>
           <div className="modal-field">
             <MapPin size={18} />
             <div>
               <span className="label">City</span>
-              <span className="value">{event.city}</span>
+              <span className={'value' + (event.cityAssumed ? ' meta-unknown' : '')}>
+                {event.city}
+                {event.cityAssumed ? ' (not confirmed on page)' : ''}
+              </span>
             </div>
           </div>
           <div className="modal-field">

@@ -10,7 +10,28 @@ const MAX_AGENT_RUNS = 0;
 const AGENT_TIMEOUT_MS = 5000;
 const CACHE_TTL_MS = 5 * 60 * 1000;
 
+// Process-local cache. On Vercel this lives inside one warm serverless
+// instance: it is lost on cold start and is not shared between concurrent
+// instances, so the effective hit rate is far below what the TTL suggests.
+// It is kept because a warm instance handling a burst of filter changes does
+// benefit, and because it gives us a stale copy to fall back on when the
+// upstream pipeline fails. A cross-instance cache (Vercel KV / Redis) is the
+// real fix and is tracked in the README.
+const CACHE_MAX_ENTRIES = 50;
 const cache = new Map();
+
+function cacheGet(key) {
+  return cache.get(key);
+}
+
+function cacheSet(key, data) {
+  // Bound growth so a long-lived warm instance cannot leak memory.
+  if (cache.size >= CACHE_MAX_ENTRIES) {
+    const oldest = cache.keys().next().value;
+    cache.delete(oldest);
+  }
+  cache.set(key, { ts: Date.now(), data });
+}
 
 function hashCode(str) {
   let hash = 0;
@@ -22,10 +43,8 @@ function hashCode(str) {
   return Math.abs(hash).toString(36).slice(0, 10);
 }
 
-function addDaysISO(days) {
-  const d = new Date();
-  d.setDate(d.getDate() + days);
-  return d.toISOString().split('T')[0];
+function currentYear() {
+  return new Date().getFullYear();
 }
 
 function filterSeedEvents(filters) {
@@ -43,8 +62,10 @@ function buildSearchQueries(filters) {
   const field = filters.field || 'student';
   const city = filters.city || 'India';
 
+  const year = currentYear();
+
   return [
-    type + ' ' + field + ' ' + city + ' India 2025',
+    type + ' ' + field + ' ' + city + ' India ' + year,
     field + ' ' + type + ' ' + city + ' India',
     'upcoming ' + type + ' ' + field + ' ' + city + ' India',
     type + ' ' + city + ' India students devfolio unstop',
@@ -58,7 +79,7 @@ function inferType(text) {
   if (lower.includes('meetup')) return 'Meetup';
   if (lower.includes('conference')) return 'Conference';
   if (lower.includes('bootcamp')) return 'Bootcamp';
-  return 'Event';
+  return '';
 }
 
 function inferField(text) {
@@ -67,7 +88,7 @@ function inferField(text) {
   if (lower.includes('business') || lower.includes('startup')) return 'Business';
   if (lower.includes('data science') || lower.includes('data')) return 'Data Science';
   if (lower.includes('product')) return 'Product';
-  return 'Technology';
+  return '';
 }
 
 function inferMode(text, url) {
@@ -93,35 +114,55 @@ function parseMonth(name) {
   return monthNames.findIndex((x) => x.toLowerCase() === name.toLowerCase().slice(0, 3));
 }
 
+// Accepts any 20xx year, then rejects dates outside a plausible event
+// window (last 12 months to 3 years out) so stray years in page text --
+// copyright lines, "since 2004" -- don't become event dates.
+function isPlausibleEventDate(iso) {
+  if (!iso) return false;
+  const d = new Date(iso + 'T00:00:00Z');
+  if (Number.isNaN(d.getTime())) return false;
+  const now = new Date();
+  const floor = new Date(now);
+  floor.setFullYear(floor.getFullYear() - 1);
+  const ceiling = new Date(now);
+  ceiling.setFullYear(ceiling.getFullYear() + 3);
+  return d >= floor && d <= ceiling;
+}
+
 function extractDate(text) {
   if (!text) return '';
 
   // YYYY-MM-DD
-  let m = text.match(/(202[5-9])-(0[1-9]|1[0-2])-([0-2][0-9]|3[0-1])/);
+  let m = text.match(/(20\d{2})-(0[1-9]|1[0-2])-([0-2][0-9]|3[0-1])/);
   if (m) return m[0];
 
   // DD Mon YYYY
-  m = text.match(/(\d{1,2})\s+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+(202[5-9])/i);
+  m = text.match(/(\d{1,2})\s+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+(20\d{2})/i);
   if (m) {
     const mon = parseMonth(m[2]);
     return m[3] + '-' + String(mon + 1).padStart(2, '0') + '-' + m[1].padStart(2, '0');
   }
 
   // Mon DD, YYYY or Mon DD-DD, YYYY
-  m = text.match(/(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+(\d{1,2})(?:[-–]\d{1,2})?,?\s+(202[5-9])/i);
+  m = text.match(/(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+(\d{1,2})(?:[-–]\d{1,2})?,?\s+(20\d{2})/i);
   if (m) {
     const mon = parseMonth(m[1]);
     return m[3] + '-' + String(mon + 1).padStart(2, '0') + '-' + m[2].padStart(2, '0');
   }
 
   // DDth to DDth Mon YYYY
-  m = text.match(/(\d{1,2})(?:st|nd|rd|th)?\s*(?:[-–]|to)\s*(?:\d{1,2})(?:st|nd|rd|th)?\s+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+(202[5-9])/i);
+  m = text.match(/(\d{1,2})(?:st|nd|rd|th)?\s*(?:[-–]|to)\s*(?:\d{1,2})(?:st|nd|rd|th)?\s+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+(20\d{2})/i);
   if (m) {
     const mon = parseMonth(m[2]);
     return m[3] + '-' + String(mon + 1).padStart(2, '0') + '-' + m[1].padStart(2, '0');
   }
 
   return '';
+}
+
+function extractPlausibleDate(text) {
+  const candidate = extractDate(text);
+  return isPlausibleEventDate(candidate) ? candidate : '';
 }
 
 function scoreUrl(result, filters) {
@@ -204,7 +245,11 @@ function mapSearchResultToEvent(result, fetchResult, filters) {
     'Student event. Visit the page for full details and registration.';
 
   const url = result.url;
-  const inferredDate = extractDate(text) || extractDate(og.title || '') || addDaysISO(30);
+  // No date found means no date shown. The previous fallback invented a
+  // date 30 days out and rendered it identically to a real one, which made
+  // every undated event look confirmed.
+  const extractedDate =
+    extractPlausibleDate(text) || extractPlausibleDate(og.title || '');
 
   const links = fetchResult?.links || [];
   const registerLink = links.find(
@@ -214,11 +259,16 @@ function mapSearchResultToEvent(result, fetchResult, filters) {
   return {
     id: 'tf-' + hashCode(url),
     title,
-    field: filters.field || inferField(text),
-    type: filters.type || inferType(text),
-    city: filters.city || inferCity(text) || 'India',
-    startDate: inferredDate,
-    endDate: inferredDate,
+    // Evidence from the page wins over the user's filter. Previously the
+    // filter was written in as fact, so filtering by "Bengaluru" labelled
+    // every result Bengaluru whether or not the page said so.
+    field: inferField(text) || filters.field || 'Technology',
+    type: inferType(text) || filters.type || 'Event',
+    city: inferCity(text) || filters.city || 'India',
+    cityAssumed: !inferCity(text),
+    startDate: extractedDate || null,
+    endDate: extractedDate || null,
+    dateUnknown: !extractedDate,
     venue: result.site_name || 'TBA',
     description,
     registrationUrl: registerLink || url,
@@ -238,7 +288,7 @@ async function enrichWithAgent(url, filters) {
 function dedupeEvents(events) {
   const seen = new Set();
   return events.filter((e) => {
-    const key = (e.title + '|' + e.startDate + '|' + e.city).toLowerCase();
+    const key = (e.title + '|' + (e.startDate || 'undated') + '|' + e.city).toLowerCase();
     if (seen.has(key)) return false;
     seen.add(key);
     return true;
@@ -282,9 +332,11 @@ export default async function handler(req, res) {
   };
 
   const cacheKey = JSON.stringify(filters);
-  const cached = cache.get(cacheKey);
+  const cached = cacheGet(cacheKey);
   if (cached && Date.now() - cached.ts < CACHE_TTL_MS) {
-    return res.status(200).json(cached.data);
+    return res
+      .status(200)
+      .json({ ...cached.data, meta: { ...cached.data.meta, cached: true } });
   }
 
   try {
@@ -323,11 +375,20 @@ export default async function handler(req, res) {
         const normalized = enriched.map((e) => ({
           id: 'tf-' + hashCode(e.registrationUrl || e._sourceUrl || e.title),
           title: e.title,
-          field: e.field || filters.field || inferField(e.title + e.description),
-          type: e.type || filters.type || inferType(e.title + e.description),
+          field:
+            e.field ||
+            inferField(e.title + e.description) ||
+            filters.field ||
+            'Technology',
+          type:
+            e.type ||
+            inferType(e.title + e.description) ||
+            filters.type ||
+            'Event',
           city: e.city || filters.city || 'India',
-          startDate: e.startDate,
-          endDate: e.endDate || e.startDate,
+          startDate: e.startDate || null,
+          endDate: e.endDate || e.startDate || null,
+          dateUnknown: !e.startDate,
           venue: e.venue || 'TBA',
           description: e.description || 'Student event.',
           registrationUrl: e.registrationUrl || e._sourceUrl || ranked[0].url,
@@ -351,13 +412,28 @@ export default async function handler(req, res) {
       meta: {
         searched: ranked.length,
         fetched: topUrls.length,
+        cached: false,
       },
     };
 
-    cache.set(cacheKey, { ts: Date.now(), data: response });
+    cacheSet(cacheKey, response);
     res.status(200).json(response);
   } catch (err) {
     console.error('Pipeline error:', err.message);
+
+    // Expired live results beat seed data: they are stale but real. Only fall
+    // through to the seeded dataset when nothing has ever been cached here.
+    if (cached) {
+      return res.status(200).json({
+        ...cached.data,
+        notice:
+          'Live extraction failed; showing cached results from ' +
+          new Date(cached.ts).toISOString() +
+          '.',
+        meta: { ...cached.data.meta, cached: true, stale: true },
+      });
+    }
+
     const fallback = {
       source: 'seed',
       events: filterSeedEvents(filters),
