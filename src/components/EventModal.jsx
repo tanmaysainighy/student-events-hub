@@ -57,7 +57,10 @@ export function EventModal({ event, isFavorite, onToggleFavorite, onClose }) {
             <MapPin size={18} />
             <div>
               <span className="label">City</span>
-              <span className="value">{event.city}</span>
+              <span className={'value' + (event.cityAssumed ? ' meta-unknown' : '')}>
+                {event.city}
+                {event.cityAssumed ? ' (not confirmed on page)' : ''}
+              </span>
             </div>
           </div>
           <div className="modal-field">

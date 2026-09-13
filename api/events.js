@@ -58,7 +58,7 @@ function inferType(text) {
   if (lower.includes('meetup')) return 'Meetup';
   if (lower.includes('conference')) return 'Conference';
   if (lower.includes('bootcamp')) return 'Bootcamp';
-  return 'Event';
+  return '';
 }
 
 function inferField(text) {
@@ -67,7 +67,7 @@ function inferField(text) {
   if (lower.includes('business') || lower.includes('startup')) return 'Business';
   if (lower.includes('data science') || lower.includes('data')) return 'Data Science';
   if (lower.includes('product')) return 'Product';
-  return 'Technology';
+  return '';
 }
 
 function inferMode(text, url) {
@@ -238,9 +238,13 @@ function mapSearchResultToEvent(result, fetchResult, filters) {
   return {
     id: 'tf-' + hashCode(url),
     title,
-    field: filters.field || inferField(text),
-    type: filters.type || inferType(text),
-    city: filters.city || inferCity(text) || 'India',
+    // Evidence from the page wins over the user's filter. Previously the
+    // filter was written in as fact, so filtering by "Bengaluru" labelled
+    // every result Bengaluru whether or not the page said so.
+    field: inferField(text) || filters.field || 'Technology',
+    type: inferType(text) || filters.type || 'Event',
+    city: inferCity(text) || filters.city || 'India',
+    cityAssumed: !inferCity(text),
     startDate: extractedDate || null,
     endDate: extractedDate || null,
     dateUnknown: !extractedDate,
@@ -348,8 +352,16 @@ export default async function handler(req, res) {
         const normalized = enriched.map((e) => ({
           id: 'tf-' + hashCode(e.registrationUrl || e._sourceUrl || e.title),
           title: e.title,
-          field: e.field || filters.field || inferField(e.title + e.description),
-          type: e.type || filters.type || inferType(e.title + e.description),
+          field:
+            e.field ||
+            inferField(e.title + e.description) ||
+            filters.field ||
+            'Technology',
+          type:
+            e.type ||
+            inferType(e.title + e.description) ||
+            filters.type ||
+            'Event',
           city: e.city || filters.city || 'India',
           startDate: e.startDate || null,
           endDate: e.endDate || e.startDate || null,
